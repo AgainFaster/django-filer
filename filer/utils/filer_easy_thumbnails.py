@@ -1,8 +1,12 @@
 #-*- coding: utf-8 -*-
-from easy_thumbnails.files import Thumbnailer
+from easy_thumbnails.files import Thumbnailer, ThumbnailFile
 import os
 import re
 from filer import settings as filer_settings
+from django.core.files.base import ContentFile
+import os
+
+from easy_thumbnails import engine, exceptions, utils
 
 # match the source filename using `__` as the seperator. ``opts_and_ext`` is non
 # greedy so it should match the last occurence of `__`.
@@ -83,6 +87,37 @@ class FilerThumbnailer(ThumbnailerNameMixin, Thumbnailer):
     def __init__(self, *args, **kwargs):
         self.thumbnail_basedir = kwargs.pop('thumbnail_basedir', '')
         super(FilerThumbnailer, self).__init__(*args, **kwargs)
+
+    def generate_thumbnail(self, thumbnail_options):
+        """
+        Return an unsaved ``ThumbnailFile`` containing a thumbnail image.
+
+        The thumbnail image is generated using the ``thumbnail_options``
+        dictionary.
+        """
+        image = self.generate_source_image(thumbnail_options)
+        if image is None:
+            raise exceptions.InvalidImageFormatError(
+                "The source file does not appear to be an image")
+
+        profile = image.info.get("icc_profile")
+        thumbnail_image = engine.process_image(image, thumbnail_options,
+                                               self.thumbnail_processors)
+        quality = thumbnail_options.get('quality', self.thumbnail_quality)
+
+        filename = self.get_thumbnail_name(thumbnail_options,
+            transparent=utils.is_transparent(thumbnail_image))
+
+        data = engine.save_image(thumbnail_image, filename=filename,
+            quality=quality, icc_profile=profile).read()
+
+        thumbnail = ThumbnailFile(filename, file=ContentFile(data),
+            storage=self.thumbnail_storage,
+            thumbnail_options=thumbnail_options)
+        thumbnail.image = thumbnail_image
+        thumbnail._committed = False
+
+        return thumbnail
 
 
 class FilerActionThumbnailer(ActionThumbnailerMixin, Thumbnailer):
